@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* Otimização de renderização e performance para aparelhos médios de produção */
+* {
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+body {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #000000;
+  overscroll-behavior-y: contain; /* Evita recarregamento/pull-to-refresh acidental na rolagem do mobile */
+  overflow-x: hidden;
+}
+
+/* Transições com ativação de aceleração gráfica por hardware */
+.smooth-gpu {
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+  will-change: transform, opacity;
+}
+
+/* Scrollbars customizadas e finas estilizadas no padrão do app (Amarelo e Preto) */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(250, 204, 21, 0.25);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(250, 204, 21, 0.55);
+}
+
+/* Ocultar barra de rolagem em carrosséis ou abas sem quebrar a navegação */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE e Edge */
+  scrollbar-width: none; /* Firefox */
+}

@@ -1,0 +1,8 @@
+{
+	"appId": "com.operaformacao.app",
+	"appName": "Opera Formação",
+	"webDir": "dist",
+	"server": {
+		"androidScheme": "https"
+	}
+}

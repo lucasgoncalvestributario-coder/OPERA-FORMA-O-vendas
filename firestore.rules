@@ -1,0 +1,164 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isGestor() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && request.auth.token.email.lower() in [
+          'operaformacao@gmail.com',
+          'operaformacar@gmail.com',
+          'valiandroopera@gmail.com',
+          'lucasgoncalvestributario@gmail.com',
+          'goncalvesopera@gmail.com',
+          'valiandrobock@gmail.com',
+          'valiandro@gmail.com',
+          'lucas@opera.com',
+          'opera@goncalves.com',
+          'oepra@goncalves.com',
+          'opera@gerente.com'
+        ]) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'gerente')
+      );
+    }
+
+    function isSecretaria() {
+      return isSignedIn() && (
+        request.auth.uid == '4iFJKUtIUkdDWKXXSDMsnJuUv6K2' ||
+        (request.auth.token != null && request.auth.token.email != null && (
+          request.auth.token.email.lower() in ['emily@opera.com', 'emilyopera@gmail.com', 'karol@opera.com'] ||
+          request.auth.token.email.lower().matches('.*emily.*') ||
+          request.auth.token.email.lower().matches('.*secretaria.*')
+        )) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'secretaria' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == 'emily@opera.com' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == 'emilyopera@gmail.com' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == 'karol@opera.com'
+        ))
+      );
+    }
+
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isGestor();
+    }
+
+    match /revoked_users/{userIdOrEmail} {
+      allow get, list: if isSignedIn();
+      allow write: if isGestor() || isSecretaria();
+    }
+
+    match /contracts/{contractId} {
+      allow read, write, delete: if isSignedIn();
+    }
+
+    match /checklists/{itemId} {
+      allow read, write: if isGestor() || isSecretaria();
+    }
+
+    match /spreadsheets/{spreadsheetId} {
+      allow read, write, delete: if isGestor() || isSecretaria();
+      
+      match /rows/{rowId} {
+        allow read, write, delete: if isGestor() || isSecretaria();
+      }
+    }
+
+    match /sales/{saleId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /users/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isOwner(userId) || isGestor();
+      allow update, delete: if isOwner(userId) || isGestor();
+
+      match /sales/{saleId} {
+        allow read: if isOwner(userId) || isGestor();
+        allow write: if isOwner(userId);
+      }
+
+      match /configs/{configId} {
+        allow read: if isOwner(userId) || isGestor();
+        allow write: if isOwner(userId);
+      }
+
+      match /push_tokens/{tokenId} {
+        allow read: if isSignedIn();
+        allow write: if isOwner(userId) || isGestor();
+      }
+    }
+
+    match /{path=**}/push_tokens/{tokenId} {
+      allow read: if isSignedIn();
+    }
+
+    match /assessor_history/{historyId} {
+      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid);
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isGestor());
+    }
+
+    match /fee_reports/{reportId} {
+      allow create: if isSignedIn() && request.resource.data.vendorId == request.auth.uid;
+      allow read: if isSecretaria() || isGestor() || (isSignedIn() && resource.data.vendorId == request.auth.uid);
+      allow list: if isSecretaria() || isGestor();
+      allow update, delete: if isSecretaria() || isGestor();
+    }
+
+    match /contracts_history/{historyId} {
+      allow create: if isSignedIn() && (isSecretaria() || isGestor() || request.resource.data.vendorId == request.auth.uid) && isValidContractHistory(request.resource.data);
+      allow read: if isSecretaria() || isGestor() || (isSignedIn() && resource.data.vendorId == request.auth.uid);
+      allow update, delete: if isSecretaria() || isGestor();
+    }
+
+    match /receipt_submissions/{submissionId} {
+      allow create: if isSecretaria() && isValidReceiptSubmission(request.resource.data);
+      allow read, list, update, delete: if isGestor();
+    }
+
+    match /notifications/{notificationId} {
+      allow create: if isSignedIn() && isValidNotification(request.resource.data);
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId == 'all' || isSecretaria() || isGestor());
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId == 'all' || isSecretaria() || isGestor());
+    }
+
+    function isValidReceiptSubmission(data) {
+      return data.name is string && data.name.size() <= 200 &&
+             data.value is string && data.value.size() <= 64 &&
+             data.timestamp is string &&
+             data.postedBy is string;
+    }
+
+    function isValidContractHistory(data) {
+      return data.contractId is string && 
+             data.clientName is string && data.clientName.size() <= 200 &&
+             data.savedAt is string;
+    }
+
+    function isValidNotification(data) {
+      return data.userId is string &&
+             data.title is string && data.title.size() <= 200 &&
+             data.message is string && data.message.size() <= 1000 &&
+             data.type in ['sale', 'contract', 'system', 'report'] &&
+             data.read is bool &&
+             data.createdAt is string;
+    }
+  }
+}

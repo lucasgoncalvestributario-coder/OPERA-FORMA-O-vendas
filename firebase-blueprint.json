@@ -1,0 +1,246 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Store individual vendor information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["vendedor", "gerente"] },
+        "pin": { "type": "string" },
+        "profilePic": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "role", "createdAt"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Sale record for a vendor",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "name": { "type": "string" },
+        "city": { "type": "string" },
+        "status": { "type": "string", "enum": ["confirmado", "não confirmado", "desistente"] },
+        "price": { "type": "number" },
+        "needsAccommodation": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "vendorId", "name", "city", "status", "price", "createdAt"]
+    },
+    "Configuration": {
+      "title": "Configuration",
+      "description": "Global or per-user business settings",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "baseSalary": { "type": "number" },
+        "commissionValue": { "type": "number" },
+        "commissionThreshold": { "type": "number" },
+        "bonusEAD15": { "type": "number" },
+        "bonusGeneral25": { "type": "number" },
+        "bonusGeneral35": { "type": "number" },
+        "tripValue": { "type": "number" },
+        "studentRateLow": { "type": "number" },
+        "studentRateMedium": { "type": "number" },
+        "studentRateHigh": { "type": "number" },
+        "monthlyGoal": { "type": "number" },
+        "yearlyGoal": { "type": "number" },
+        "extraBonuses": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      },
+      "required": ["userId"]
+    },
+    "Contract": {
+      "title": "Contract",
+      "description": "Contract record for a sale",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "saleId": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientCpf": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "courseType": { "type": "string" },
+        "courseCity": { "type": "string" },
+        "courseDate": { "type": "string" },
+        "matriculaValue": { "type": "number" },
+        "remainderValue": { "type": "number" },
+        "needsLodging": { "type": "string" },
+        "observations": { "type": "string" },
+        "isPrinted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "vendorId", "clientName", "createdAt"]
+    },
+    "ContractHistory": {
+      "title": "Contract History",
+      "description": "Saved contracts archived by secretary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "contractId": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientCpf": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "courseType": { "type": "string" },
+        "courseCity": { "type": "string" },
+        "courseDate": { "type": "string" },
+        "savedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["contractId", "clientName", "savedAt"]
+    },
+    "FeeReport": {
+      "title": "Fee Report",
+      "description": "Weekly fee report sent by vendors to secretary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "weekStart": { "type": "string" },
+        "weekEnd": { "type": "string" },
+        "totalFees": { "type": "number" },
+        "salesCount": { "type": "number" },
+        "details": { "type": "array", "items": { "type": "object" } },
+        "status": { "type": "string", "enum": ["unread", "read"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vendorId", "totalFees", "createdAt"]
+    },
+    "ReceiptSubmission": {
+      "title": "Receipt Submission",
+      "description": "Receipts posted by secretary Karol for gestor review",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "cpf": { "type": "string" },
+        "value": { "type": "string" },
+        "date": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "postedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["pendente", "aprovado"] }
+      },
+      "required": ["name", "value", "timestamp", "postedBy"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Real-time notification for users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["sale", "contract", "system", "report"] },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" }
+      },
+      "required": ["userId", "title", "message", "type", "read", "createdAt"]
+    },
+    "Spreadsheet": {
+      "title": "Spreadsheet",
+      "description": "Spreadsheet records for secretaries and managers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "url": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "url", "createdAt"]
+    },
+    "SpreadsheetRow": {
+      "title": "SpreadsheetRow",
+      "description": "Rows exported to a specific spreadsheet",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "nome": { "type": "string" },
+        "contato": { "type": "string" },
+        "taxa": { "type": "string" },
+        "curso": { "type": "string" },
+        "hotel": { "type": "string" },
+        "consultor": { "type": "string" },
+        "obs": { "type": "string" },
+        "boleto": { "type": "string" },
+        "contractId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "nome", "contato", "taxa", "curso", "hotel", "consultor", "createdAt"]
+    },
+    "RevokedUser": {
+      "title": "Revoked User",
+      "description": "Store revoked/banned emails and user IDs to block access immediately",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "revokedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "revokedAt"]
+    }
+  },
+  "firestore": {
+    "/revoked_users/{userIdOrEmail}": {
+      "schema": "RevokedUser",
+      "description": "Revoked/banned users block list"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles"
+    },
+    "/users/{userId}/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Vendor sales"
+    },
+    "/users/{userId}/configs/main": {
+      "schema": "Configuration",
+      "description": "User specific configurations"
+    },
+    "/contracts/{contractId}": {
+      "schema": "Contract",
+      "description": "Contracts list"
+    },
+    "/fee_reports/{reportId}": {
+      "schema": "FeeReport",
+      "description": "Weekly fee reports for secretary"
+    },
+    "/contracts_history/{historyId}": {
+      "schema": "ContractHistory",
+      "description": "Archived contracts history"
+    },
+    "/receipt_submissions/{submissionId}": {
+      "schema": "ReceiptSubmission",
+      "description": "Receipts for management review"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Global user notifications"
+    },
+    "/spreadsheets/{spreadsheetId}": {
+      "schema": "Spreadsheet",
+      "description": "Spreadsheet documents"
+    },
+    "/spreadsheets/{spreadsheetId}/rows/{rowId}": {
+      "schema": "SpreadsheetRow",
+      "description": "Rows/entries saved inside a spreadsheet"
+    }
+  }
+}

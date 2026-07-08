@@ -1,0 +1,6 @@
+{
+  "name": "Opera Formação | Gestão de Vendas",
+  "description": "Sistema profissional de alta performance com atualização automática, sessões persistentes e notificações em tempo real sincronizadas.",
+  "requestFramePermissions": ["camera", "notifications", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
