@@ -684,6 +684,12 @@ export default function App() {
             profile.role = 'vendedor';
           }
 
+          // Garante que a aba do simulador de carteirinha esteja ativa e gravada no perfil do banco
+          if (profile.canSeeCarteirinha !== true) {
+            updateDoc(userRef, { canSeeCarteirinha: true }).catch(console.error);
+            profile.canSeeCarteirinha = true;
+          }
+
           setUserProfile(profile);
           if (profile.name) setNewNameInput(profile.name);
           if (profile.wascriptToken) setWascriptTokenInput(profile.wascriptToken);
@@ -771,8 +777,14 @@ export default function App() {
       finalName = 'Valiandro Bock';
     } else if (user.email === 'valiandro@gmail.com') {
       finalName = 'Valiandro';
-    } else if (user.email === 'amandaopera@gmail.com') {
+    } else if (user.email === 'amandaopera@gmail.com' || user.email?.toLowerCase().trim() === 'amandamiranda@opera.com') {
       finalName = 'Amanda';
+    } else if (user.email && user.email.toLowerCase().includes('martin')) {
+      if (user.email.toLowerCase().includes('martina')) {
+        finalName = 'Martina';
+      } else {
+        finalName = 'Martin';
+      }
     }
 
     const profileData = {
@@ -782,6 +794,7 @@ export default function App() {
       role: isGerente ? 'gerente' : (isSecretaria ? 'secretaria' : 'vendedor'),
       pin: pinInput,
       cities: CITIES_LIST,
+      canSeeCarteirinha: true,
       createdAt: new Date().toISOString()
     };
 
@@ -1974,7 +1987,7 @@ export default function App() {
   ].includes(user.email.toLowerCase());
 
   useEffect(() => {
-    const canSeeCarteirinha = isLucas || isGlobalManager || isGestor || userProfile?.role === 'gerente';
+    const canSeeCarteirinha = true;
     if (isGlobalManager) {
       if (!['resumo', 'vendas', 'contratos', 'config', 'equipe', 'carteirinha'].includes(activeTab)) {
         setActiveTab('resumo');
@@ -2083,6 +2096,7 @@ export default function App() {
         pin: '1234',
         leadsCount: 0,
         manualSalesAdjust: 0,
+        canSeeCarteirinha: true,
         createdAt: new Date().toISOString()
       });
       setNewExtName('');
@@ -2182,6 +2196,7 @@ export default function App() {
                 pin: '1234',
                 leadsCount: 0,
                 manualSalesAdjust: 0,
+                canSeeCarteirinha: true,
                 createdAt: new Date().toISOString()
               });
               console.log(`Consultor externo "${c.name}" foi adicionado com sucesso à equipe.`);
@@ -3122,14 +3137,7 @@ export default function App() {
     return () => clearTimeout(timeoutId);
   }, [localTravelCount, classBonuses]);
 
-  useEffect(() => {
-    if (user && isPinVerified) {
-      const namesToRedirect = ['Lucas', 'Amanda', 'Dani', 'Lucas Gonçalves'];
-      if (namesToRedirect.includes(user.displayName || '')) {
-        setActiveTab('turmas');
-      }
-    }
-  }, [user, isPinVerified]);
+
   useEffect(() => {
     if (!user) {
       setSales([]);
@@ -3530,6 +3538,7 @@ export default function App() {
             pin: '1234',
             leadsCount: 0,
             manualSalesAdjust: 0,
+            canSeeCarteirinha: true,
             createdAt: new Date().toISOString()
           });
           
@@ -6606,16 +6615,22 @@ Caso você não compareça no primeiro dia do curso (*${f.courseDate}*) sem avis
               <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider mt-1">Acesso Exclusivo: Gerente Gonçalves & Lucas Gonçalves</p>
             </div>
           </div>
-          <div className="flex gap-2 relative z-10 w-full md:w-auto">
+          <div className="flex flex-wrap gap-2 relative z-10 w-full md:w-auto">
+            <button
+              onClick={() => setShowExternalSaleModal(true)}
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-gradient-to-r from-yellow-500 to-yellow-400 text-black font-black uppercase text-[10px] tracking-wider rounded-2xl hover:from-yellow-400 hover:to-yellow-300 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-yellow-400/20 cursor-pointer"
+            >
+              <PlusCircle size={16} /> Lançar Venda Externa
+            </button>
             <button
               onClick={() => downloadEquipeReport(false)}
-              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-yellow-400 text-black font-black uppercase text-[10px] tracking-wider rounded-2xl hover:bg-yellow-300 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-yellow-400/10 cursor-pointer"
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-neutral-800 border border-neutral-700 text-white font-black uppercase text-[10px] tracking-wider rounded-2xl hover:bg-neutral-700 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
               <Printer size={16} /> Imprimir Tudo (PDF)
             </button>
             <button
               onClick={() => downloadEquipeReport(true)}
-              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-neutral-800 border border-neutral-700 text-white font-black uppercase text-[10px] tracking-wider rounded-2xl hover:bg-neutral-700 active:scale-[0.98] transition-all cursor-pointer"
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-3 bg-neutral-850 border border-neutral-800 text-neutral-400 font-black uppercase text-[10px] tracking-wider rounded-2xl hover:text-white active:scale-[0.98] transition-all cursor-pointer"
             >
               <Printer size={16} /> Impressão ECO
             </button>
@@ -11077,7 +11092,7 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
   const menuItems = useMemo(() => {
     const isLucasOrGoncalves = isLucas || isOperaGoncalves;
     const canSeeEquipe = isLucasOrGoncalves || isGestor || userProfile?.role === 'gerente';
-    const canSeeCarteirinha = isLucas || isGlobalManager || isGestor || userProfile?.role === 'gerente';
+    const canSeeCarteirinha = true;
 
     if (isGlobalManager) {
       const items = [
@@ -14242,8 +14257,7 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
                         className="w-full bg-black/50 border border-white/10 rounded-2xl px-5 py-4 text-xs font-black text-white focus:border-yellow-400 focus:outline-none"
                       >
                         <option value="">-- Selecione o Consultor --</option>
-                        {rawAllUsers
-                          .filter((u: any) => u.role === 'vendedor' && !(u.email?.toLowerCase() || '').includes('karol') && !(u.name?.toLowerCase() || '').includes('karol'))
+                        {allUsers
                           .sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''))
                           .map((s: any) => (
                             <option key={s.id} value={s.id}>{s.name?.toUpperCase()}</option>
