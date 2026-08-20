@@ -2004,8 +2004,8 @@ export default function App() {
       if (canSeeCarteirinha) {
         allowed.push('carteirinha');
       }
-      const isSellerOrEmily = !isKarol && (!isSecretaria || isEmily);
-      if (isSellerOrEmily) {
+      const isSeller = !isKarol && !isSecretaria;
+      if (isSeller) {
         allowed.push('vendas');
       }
       if (isSecretaria) {
@@ -11352,9 +11352,9 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
       { id: 'resumo', label: 'Dashboard', icon: LayoutGrid },
     ];
 
-    // Se for vendedor (não for Karol e não for Secretaria) ou for a Emily, conter a aba de Vendas
-    const isSellerOrEmily = !isKarol && (!isSecretaria || isEmily);
-    if (isSellerOrEmily) {
+    // Se for vendedor (não for Karol e não for Secretaria), conter a aba de Vendas
+    const isSeller = !isKarol && !isSecretaria;
+    if (isSeller) {
       items.push({ id: 'vendas', label: 'Vendas', icon: Plus });
     }
 
@@ -13622,8 +13622,8 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
             </motion.div>
           )}
 
-          {/* ABA VENDAS (Vendedor + Emily) */}
-          {(activeTab === 'vendas' && (!isSecretaria || (isSecretaria && ['emily@opera.com', 'emilyopera@gmail.com'].includes(user?.email?.toLowerCase() || '')))) && (
+          {/* ABA VENDAS (Vendedor) */}
+          {(activeTab === 'vendas' && !isSecretaria) && (
             <motion.div key="vendas" variants={tabVariants} initial="initial" animate="animate" exit="exit" className="space-y-4">
               
               {/* FORMULÁRIO DE EDIÇÃO OU ADIÇÃO */}
