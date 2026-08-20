@@ -1994,10 +1994,15 @@ export default function App() {
   ].includes(user.email.toLowerCase());
 
   useEffect(() => {
-    const canSeeCarteirinha = true;
+    const canSeeCarteirinha = !isEmily;
     if (isGlobalManager) {
       if (!['resumo', 'vendas', 'contratos', 'config', 'equipe', 'carteirinha'].includes(activeTab)) {
         setActiveTab('resumo');
+      }
+    } else if (isEmily) {
+      const allowed = ['contratos', 'config'];
+      if (!allowed.includes(activeTab)) {
+        setActiveTab('contratos');
       }
     } else {
       const allowed = ['resumo', 'contratos', 'config'];
@@ -11329,7 +11334,7 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
   const menuItems = useMemo(() => {
     const isLucasOrGoncalves = isLucas || isOperaGoncalves;
     const canSeeEquipe = isLucasOrGoncalves || isGestor || userProfile?.role === 'gerente';
-    const canSeeCarteirinha = true;
+    const canSeeCarteirinha = !isEmily;
 
     if (isGlobalManager) {
       const items = [
@@ -11345,6 +11350,13 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
       }
       items.push({ id: 'config', label: 'Ajustes', icon: Settings });
       return items;
+    }
+
+    if (isEmily) {
+      return [
+        { id: 'contratos', label: 'Contratos', icon: FileText },
+        { id: 'config', label: 'Ajustes', icon: Settings },
+      ];
     }
 
     // Todos os outros acessos sem exceção
@@ -12142,7 +12154,8 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
             </motion.div>
           )}
 
-          {activeTab === 'resumo' && (
+          {/* TAB: RESUMO (DASHBOARD) */}
+          {activeTab === 'resumo' && !isEmily && (
             <motion.div key="resumo" variants={tabVariants} initial="initial" animate="animate" exit="exit" className="space-y-4">
               
               {/* BANNERS DE INSTALAÇÃO E NOTIFICAÇÃO (Estilo App Nativo) */}
@@ -13890,7 +13903,7 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
           )}
 
           {/* TAB: CARTEIRINHA */}
-          {activeTab === 'carteirinha' && (
+          {activeTab === 'carteirinha' && !isEmily && (
             <motion.div key="carteirinha" variants={tabVariants} initial="initial" animate="animate" exit="exit" className="space-y-6">
               {renderCarteirinhaTab()}
             </motion.div>
