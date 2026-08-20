@@ -9468,7 +9468,7 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
       
       const { initializeApp: initTempApp, getApps } = await import('firebase/app');
       const { getAuth: getTempAuth } = await import('firebase/auth');
-      const firebaseConfig = (await import('../firebase-applet-config.json')).default;
+      const { firebaseConfig } = await import('./lib/firebase');
       
       const existingApps = getApps();
       const tempApp = existingApps.find(app => app.name === "GoogleSheetsAuthTemp") || initTempApp(firebaseConfig, "GoogleSheetsAuthTemp");

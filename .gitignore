@@ -1,8 +1,29 @@
+# Dependencies
 node_modules/
+
+# Production & Build outputs
 build/
 dist/
+dist-ssr/
 coverage/
-.DS_Store
-*.log
+*.local
+
+# Environment variables
 .env*
 !.env.example
+
+# Firebase applet local config
+firebase-applet-config.json
+
+# Android build outputs and generated web assets
+android/build/
+android/.gradle/
+android/app/build/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+
+# IDE & OS files
+.DS_Store
+Thumbs.db
+*.log
