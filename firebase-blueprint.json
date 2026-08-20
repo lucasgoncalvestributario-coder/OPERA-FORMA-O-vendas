@@ -195,9 +195,21 @@
         "revokedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "revokedAt"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Global or UI settings such as carteirinha calibration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" }
+      }
     }
   },
   "firestore": {
+    "/settings/{settingId}": {
+      "schema": "Setting",
+      "description": "Global and system calibration settings"
+    },
     "/revoked_users/{userIdOrEmail}": {
       "schema": "RevokedUser",
       "description": "Revoked/banned users block list"

@@ -410,6 +410,7 @@ export default function App() {
   const [isGlobalView, setIsGlobalView] = useState(false);
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [secretarySubTab, setSecretarySubTab] = useState<'historico' | 'checklist'>('historico');
+  const [secretaryContractFilter, setSecretaryContractFilter] = useState<'pendentes' | 'ok'>('pendentes');
   const [contractSubTab, setContractSubTab] = useState<'novo' | 'lista'>('novo');
 
   const MANAGER_ACCOUNTS: Record<string, string> = {
@@ -1112,23 +1113,29 @@ export default function App() {
   const [cropY, setCropY] = useState(0);
   const [cropRotation, setCropRotation] = useState(0);
 
-  // Load global calibration on mount
+  // Load global calibration on mount and when auth state updates
   useEffect(() => {
+    let isMounted = true;
     const loadCalibration = async () => {
       try {
         const snap = await getDoc(doc(db, 'settings', 'carteirinha_calibration'));
+        if (!isMounted) return;
         if (snap.exists()) {
           setCalibration({ ...DEFAULT_CALIBRATION, ...snap.data() });
         } else {
           setCalibration(DEFAULT_CALIBRATION);
         }
-      } catch (err) {
-        console.error("Erro ao carregar calibragem:", err);
+      } catch (err: any) {
+        if (!isMounted) return;
+        console.warn("Utilizando calibragem padrão da carteirinha:", err?.message || err);
         setCalibration(DEFAULT_CALIBRATION);
       }
     };
     loadCalibration();
-  }, []);
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
 
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
   const [bgLoaded, setBgLoaded] = useState(false);
@@ -9979,85 +9986,268 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
   };
 
   const renderSecretaryPanel = () => {
-    const sellers = Array.from(new Set(contracts.map(c => ((c.vendorName || c.consultant || 'Vendedor Sem Nome') as string).trim()))).sort();
-    const cities = Array.from(new Set(contracts.map(c => ((c.courseCity || 'Cidade Não Informada') as string).trim()))).sort();
+    // Classificação inteligente de contratos:
+    // Pendentes: Contratos ainda NÃO impressos e que não desistiram.
+    // Contratos OK: Contratos impressos (isPrinted: true) ou com status 'desistente'/'arquivado'.
+    const isPendingContract = (c: any) => {
+      if (c.status === 'desistente' || c.status === 'arquivado') return false;
+      return c.isPrinted !== true;
+    };
+
+    const isOkContract = (c: any) => {
+      return c.isPrinted === true || c.status === 'desistente' || c.status === 'arquivado';
+    };
+
+    const pendingContracts = contracts.filter(c => isPendingContract(c));
+    const okContracts = contracts.filter(c => isOkContract(c));
+
+    const activeFilteredList = secretaryContractFilter === 'pendentes' ? pendingContracts : okContracts;
+
+    const searchedContracts = activeFilteredList.filter(c => {
+      const term = searchTerm.toLowerCase().trim();
+      if (!term) return true;
+      const clientName = (c.clientName || '').toLowerCase();
+      const clientCpf = (c.clientCpf || '');
+      const vendor = (c.vendorName || c.consultant || '').toLowerCase();
+      const city = (c.courseCity || '').toLowerCase();
+      return clientName.includes(term) || clientCpf.includes(term) || vendor.includes(term) || city.includes(term);
+    });
+
+    const sellers = Array.from(new Set(searchedContracts.map(c => ((c.vendorName || c.consultant || 'Vendedor Sem Nome') as string).trim()))).sort();
+    const cities = Array.from(new Set(searchedContracts.map(c => ((c.courseCity || 'Cidade Não Informada') as string).trim()))).sort();
+
+    const handleTogglePrinted = async (contractId: string, currentPrinted: boolean) => {
+      try {
+        const contractRef = doc(db, 'contracts', contractId);
+        await updateDoc(contractRef, { 
+          isPrinted: !currentPrinted,
+          printedAt: !currentPrinted ? new Date().toISOString() : null,
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error("Erro ao atualizar status do contrato:", err);
+      }
+    };
 
     return (
-      <div className="space-y-8 pb-24">
-        {/* BUSCA */}
-        <div className="bg-neutral-900 border border-white/5 p-6 rounded-[2.5rem] flex items-center gap-4">
-          <Search className="text-yellow-400" />
+      <div className="space-y-6 pb-24">
+        {/* CABEÇALHO COM ABAS EXCLUSIVAS DE GERENCIAMENTO (PENDENTES x OK) */}
+        <div className="bg-neutral-900 border border-white/5 p-3 rounded-[2.5rem] shadow-xl">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* ABA: CONTRATOS PENDENTES */}
+            <button
+              onClick={() => setSecretaryContractFilter('pendentes')}
+              type="button"
+              className={`p-5 rounded-[2rem] flex items-center justify-between transition-all select-none text-left cursor-pointer border ${
+                secretaryContractFilter === 'pendentes'
+                  ? 'bg-red-500/10 border-red-500 text-white shadow-[0_0_25px_rgba(239,68,68,0.2)]'
+                  : 'bg-black/40 border-white/5 text-neutral-400 hover:border-white/20 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-3.5">
+                <div className={`p-3 rounded-2xl ${secretaryContractFilter === 'pendentes' ? 'bg-red-500 text-white shadow-lg shadow-red-500/40' : 'bg-neutral-800 text-neutral-400'}`}>
+                  <AlertCircle size={22} className={pendingContracts.length > 0 ? "animate-pulse" : ""} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider text-white">Contratos Pendentes</h3>
+                  <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-tight">Aguardando Impressão</p>
+                </div>
+              </div>
+              <span className={`px-3 py-1.5 rounded-full text-xs font-black tracking-widest ${
+                pendingContracts.length > 0 
+                  ? 'bg-red-500 text-white shadow-[0_0_12px_rgba(239,68,68,0.5)] animate-pulse' 
+                  : 'bg-neutral-800 text-neutral-500'
+              }`}>
+                {pendingContracts.length} PENDENTES
+              </span>
+            </button>
+
+            {/* ABA: CONTRATOS OK (IMPRESSOS / DESISTENTES) */}
+            <button
+              onClick={() => setSecretaryContractFilter('ok')}
+              type="button"
+              className={`p-5 rounded-[2rem] flex items-center justify-between transition-all select-none text-left cursor-pointer border ${
+                secretaryContractFilter === 'ok'
+                  ? 'bg-[#39FF14]/10 border-[#39FF14] text-white shadow-[0_0_25px_rgba(57,255,20,0.15)]'
+                  : 'bg-black/40 border-white/5 text-neutral-400 hover:border-white/20 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-3.5">
+                <div className={`p-3 rounded-2xl ${secretaryContractFilter === 'ok' ? 'bg-[#39FF14] text-black shadow-lg shadow-[#39FF14]/40' : 'bg-neutral-800 text-neutral-400'}`}>
+                  <CheckCircle2 size={22} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wider text-white">Contratos OK</h3>
+                  <p className="text-[10px] text-neutral-400 font-bold uppercase tracking-tight">Já Impressos & Desistentes</p>
+                </div>
+              </div>
+              <span className="bg-[#39FF14] text-black px-3 py-1.5 rounded-full text-xs font-black tracking-widest shadow-[0_0_12px_rgba(57,255,20,0.3)]">
+                {okContracts.length} CONCLUÍDOS
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* BUSCA EM TEMPO REAL */}
+        <div className="bg-neutral-900 border border-white/5 p-5 rounded-[2rem] flex items-center gap-4">
+          <Search className="text-yellow-400 shrink-0" size={20} />
           <input 
-            className="bg-transparent border-none outline-none text-sm w-full font-bold uppercase tracking-widest"
-            placeholder="BUSCAR CONTRATO (NOME OU CPF)..."
+            className="bg-transparent border-none outline-none text-xs sm:text-sm w-full font-bold uppercase tracking-widest text-white placeholder:text-neutral-600"
+            placeholder={secretaryContractFilter === 'pendentes' ? "BUSCAR NOS PENDENTES (CLIENTE, CPF, CIDADE, VENDEDOR)..." : "BUSCAR NOS CONTRATOS OK (CLIENTE, CPF, CIDADE)..."}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          {searchTerm && (
+            <button onClick={() => setSearchTerm('')} className="text-neutral-500 hover:text-white p-1">
+              <X size={16} />
+            </button>
+          )}
         </div>
 
-        {/* ORGANIZAÇÃO POR VENDEDOR */}
-        <div className="space-y-6">
-          <div className="flex items-center gap-4 px-4">
-            <Briefcase size={20} className="text-yellow-400" />
-            <h2 className="text-xl font-black uppercase tracking-tighter">Contratos por Vendedor</h2>
+        {/* SE NÃO HOUVER NENHUM CONTRATO NA ABA SELECIONADA */}
+        {searchedContracts.length === 0 && (
+          <div className="bg-neutral-900/50 border border-dashed border-white/5 p-12 rounded-[2.5rem] text-center space-y-3">
+            <div className="w-14 h-14 mx-auto rounded-full flex items-center justify-center bg-neutral-800/80">
+              {secretaryContractFilter === 'pendentes' ? (
+                <CheckCircle2 size={28} className="text-[#39FF14]" />
+              ) : (
+                <FileText size={28} className="text-yellow-400" />
+              )}
+            </div>
+            <p className="text-white font-black uppercase text-sm tracking-wide">
+              {secretaryContractFilter === 'pendentes' 
+                ? (searchTerm ? "Nenhum contrato pendente encontrado para a busca." : "Nenhum contrato pendente de impressão!") 
+                : (searchTerm ? "Nenhum contrato OK encontrado para a busca." : "Nenhum contrato impresso ou finalizado ainda.")}
+            </p>
+            <p className="text-neutral-500 text-xs max-w-md mx-auto">
+              {secretaryContractFilter === 'pendentes'
+                ? "Assim que os consultores enviarem novos contratos, eles aparecerão automaticamente aqui para impressão."
+                : "Quando você imprimir os contratos pendentes, eles virão automaticamente para esta aba de contratos OK."}
+            </p>
           </div>
-          <div className="grid grid-cols-1 gap-4">
+        )}
+
+        {searchedContracts.length > 0 && (
+          <div className="space-y-8">
+            {/* ORGANIZAÇÃO POR VENDEDOR */}
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 px-4">
+                <Briefcase size={18} className="text-yellow-400" />
+                <h2 className="text-lg font-black uppercase tracking-tight text-white">
+                  {secretaryContractFilter === 'pendentes' ? 'Pendentes por Consultor' : 'Contratos OK por Consultor'}
+                </h2>
+              </div>
+              <div className="grid grid-cols-1 gap-4">
                 {sellers.map(seller => {
-                  const sellerContracts = contracts.filter(c => {
+                  const sellerContracts = searchedContracts.filter(c => {
                     const cVendor = (((c as any).vendorName || (c as any).consultant || 'Vendedor Sem Nome') as string).trim().toLowerCase();
                     const sTarget = ((seller as any) || 'Vendedor Sem Nome').trim().toLowerCase();
-                    return cVendor === sTarget && 
-                           ((c as any).clientName.toLowerCase().includes(searchTerm.toLowerCase()) || ((c as any).clientCpf && (c as any).clientCpf.includes(searchTerm)));
+                    return cVendor === sTarget;
                   });
                   if (sellerContracts.length === 0) return null;
 
                   return (
-                    <div key={seller} className="bg-neutral-900/50 border border-white/5 rounded-[2rem] overflow-hidden">
-                      <div className="p-6 bg-neutral-800/30 border-b border-white/5 flex justify-between items-center">
-                        <p className="text-sm font-black uppercase tracking-widest text-yellow-400">{seller}</p>
-                        <span className="bg-yellow-400 text-black px-3 py-1 rounded-full text-[10px] font-black">{sellerContracts.length} CONTRATOS</span>
+                    <div key={seller} className="bg-neutral-900/60 border border-white/5 rounded-[2rem] overflow-hidden">
+                      <div className="p-5 bg-neutral-800/40 border-b border-white/5 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <User size={16} className="text-yellow-400" />
+                          <p className="text-xs font-black uppercase tracking-widest text-yellow-400">{seller}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-black ${
+                          secretaryContractFilter === 'pendentes' ? 'bg-red-500 text-white' : 'bg-[#39FF14] text-black'
+                        }`}>
+                          {sellerContracts.length} {sellerContracts.length === 1 ? 'CONTRATO' : 'CONTRATOS'}
+                        </span>
                       </div>
                       <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                         {sellerContracts.map(contract => (
-                          <div key={contract.id} className={`bg-black/40 border p-4 rounded-2xl flex justify-between items-center group transition-all ${contract.status === 'desistente' ? 'border-red-500/20 opacity-60' : contract.isPrinted ? 'border-[#39FF14]/50 shadow-[0_0_15px_rgba(57,255,20,0.1)]' : 'border-red-500/40 shadow-[0_0_15px_rgba(239,68,68,0.1)]'}`}>
-                            <div>
-                              <div className={`inline-block px-2 py-0.5 rounded-md mb-1 ${contract.status === 'desistente' ? 'bg-red-500/10 text-red-500 border border-red-500/20' : contract.isPrinted ? 'bg-[#39FF14] text-black shadow-[0_0_8px_rgba(57,255,20,0.4)]' : 'bg-red-500 text-white animate-pulse'}`}>
-                                 <p className="text-[10px] font-black uppercase tracking-tighter">
-                                   {contract.status === 'desistente' ? 'DESISTENTE' : contract.isPrinted ? 'CONTRATO OK' : 'PENDENTE'}
-                                 </p>
+                          <div 
+                            key={contract.id} 
+                            className={`bg-black/50 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 group transition-all ${
+                              contract.status === 'desistente' 
+                                ? 'border-red-500/20 opacity-60 bg-red-950/10' 
+                                : contract.isPrinted 
+                                ? 'border-[#39FF14]/50 shadow-[0_0_15px_rgba(57,255,20,0.08)]' 
+                                : 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.15)]'
+                            }`}
+                          >
+                            <div className="space-y-1 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+                                  contract.status === 'desistente' 
+                                    ? 'bg-red-500/10 text-red-400 border border-red-500/30' 
+                                    : contract.isPrinted 
+                                    ? 'bg-[#39FF14] text-black shadow-[0_0_8px_rgba(57,255,20,0.4)]' 
+                                    : 'bg-red-500 text-white animate-pulse'
+                                }`}>
+                                  {contract.status === 'desistente' ? 'DESISTENTE' : contract.isPrinted ? 'CONTRATO OK' : 'PENDENTE DE IMPRESSÃO'}
+                                </span>
+                                {contract.isPrinted && contract.printedAt && (
+                                  <span className="text-[8px] text-neutral-500 font-mono">
+                                    {new Date(contract.printedAt).toLocaleDateString()}
+                                  </span>
+                                )}
                               </div>
-                              <p className="text-xs font-black uppercase text-white">{contract.clientName}</p>
-                              <p className="text-[10px] font-bold text-neutral-500 uppercase mt-1">{contract.courseCity} • {contract.courseType}</p>
+                              <p className="text-sm font-black uppercase text-white tracking-tight">{contract.clientName}</p>
+                              <p className="text-[10px] font-bold text-neutral-400 uppercase">
+                                {contract.courseCity} • {contract.courseType}
+                              </p>
+                              {contract.clientCpf && (
+                                <p className="text-[9px] font-mono text-neutral-500">CPF: {contract.clientCpf}</p>
+                              )}
                             </div>
-                            <div className="flex gap-2">
-                               <button 
-                                 onClick={() => {
-                                   setExportingContract(contract);
-                                   if (spreadsheets.length > 0) {
-                                     setSelectedExportSpreadsheetId(spreadsheets[0].id);
-                                   } else {
-                                     setSelectedExportSpreadsheetId('');
-                                   }
-                                 }}
-                                 className="p-3 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-xl hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95"
-                                 title="Colocar na Planilha Google"
-                               >
-                                 <TableProperties size={16} />
-                               </button>
-                               <button 
-                                 onClick={() => generateContractPDF(contract, false, true)}
-                                 className="p-3 bg-white/5 border border-white/10 rounded-xl text-neutral-400 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center hover:scale-105 active:scale-95"
-                                 title="Imprimir (ECO)"
-                               >
-                                 <Printer size={16} />
-                               </button>
-                               <button 
-                                 onClick={() => deleteContract(contract.id)}
-                                 className="p-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95"
-                                 title="Excluir Contrato"
-                               >
-                                 <Trash2 size={16} />
-                               </button>
+
+                            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
+                              {/* BOTÃO PLANILHA GOOGLE */}
+                              <button 
+                                onClick={() => {
+                                  setExportingContract(contract);
+                                  if (spreadsheets.length > 0) {
+                                    setSelectedExportSpreadsheetId(spreadsheets[0].id);
+                                  } else {
+                                    setSelectedExportSpreadsheetId('');
+                                  }
+                                }}
+                                className="p-3 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-xl hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 cursor-pointer"
+                                title="Colocar na Planilha Google"
+                              >
+                                <TableProperties size={16} />
+                              </button>
+
+                              {/* BOTÃO IMPRIMIR (ECO / PDF) -> AUTOMATICAMENTE MARCA COMO IMPRESSO */}
+                              <button 
+                                onClick={() => generateContractPDF(contract, false, true)}
+                                className={`p-3 rounded-xl transition-all flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer ${
+                                  !contract.isPrinted && contract.status !== 'desistente'
+                                    ? 'bg-yellow-400 text-black border border-yellow-300 shadow-[0_0_15px_rgba(250,204,21,0.3)] font-black'
+                                    : 'bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white'
+                                }`}
+                                title={!contract.isPrinted ? "Imprimir Contrato (Move imediatamente para Contratos OK)" : "Reimprimir Contrato"}
+                              >
+                                <Printer size={16} />
+                              </button>
+
+                              {/* BOTÃO TOGGLE RÁPIDO: MARCAR COMO OK OU RETORNAR PARA PENDENTE */}
+                              <button 
+                                onClick={() => handleTogglePrinted(contract.id, !!contract.isPrinted)}
+                                className={`p-3 rounded-xl transition-all flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer ${
+                                  contract.isPrinted 
+                                    ? 'bg-neutral-800 text-neutral-400 border border-white/5 hover:text-red-400 hover:border-red-500/30' 
+                                    : 'bg-[#39FF14]/10 text-[#39FF14] border border-[#39FF14]/30 hover:bg-[#39FF14] hover:text-black'
+                                }`}
+                                title={contract.isPrinted ? "Mover de volta para Pendentes" : "Marcar como Impresso / OK"}
+                              >
+                                {contract.isPrinted ? <RotateCw size={16} /> : <CheckCircle2 size={16} />}
+                              </button>
+
+                              {/* EXCLUIR */}
+                              <button 
+                                onClick={() => deleteContract(contract.id)}
+                                className="p-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 hover:bg-red-500 hover:text-white cursor-pointer"
+                                title="Excluir Contrato"
+                              >
+                                <Trash2 size={16} />
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -10069,68 +10259,113 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
             </div>
 
             {/* ORGANIZAÇÃO POR CIDADE / TURMA */}
-            <div className="space-y-6">
-              <div className="flex items-center gap-4 px-4">
-                <MapPin size={20} className="text-yellow-400" />
-                <h2 className="text-xl font-black uppercase tracking-tighter">Contratos por Cidade</h2>
+            <div className="space-y-4 pt-4">
+              <div className="flex items-center gap-3 px-4">
+                <MapPin size={18} className="text-yellow-400" />
+                <h2 className="text-lg font-black uppercase tracking-tight text-white">
+                  {secretaryContractFilter === 'pendentes' ? 'Pendentes por Cidade' : 'Contratos OK por Cidade'}
+                </h2>
               </div>
               <div className="grid grid-cols-1 gap-4">
                 {cities.map(city => {
-                  const cityContracts = contracts.filter(c => {
+                  const cityContracts = searchedContracts.filter(c => {
                     const cCity = (((c as any).courseCity || 'Cidade Não Informada') as string).trim().toLowerCase();
                     const targetCity = ((city as any) || 'Cidade Não Informada').trim().toLowerCase();
-                    return cCity === targetCity && 
-                           ((c as any).clientName.toLowerCase().includes(searchTerm.toLowerCase()) || ((c as any).clientCpf && (c as any).clientCpf.includes(searchTerm)));
+                    return cCity === targetCity;
                   });
                   if (cityContracts.length === 0) return null;
 
                   return (
-                    <div key={city} className="bg-neutral-900/50 border border-white/5 rounded-[2rem] overflow-hidden">
-                      <div className="p-6 bg-neutral-800/30 border-b border-white/5 flex justify-between items-center">
-                        <p className="text-sm font-black uppercase tracking-widest text-yellow-400">{city}</p>
-                        <span className="bg-yellow-400 text-black px-3 py-1 rounded-full text-[10px] font-black">{cityContracts.length} ALUNOS</span>
+                    <div key={city} className="bg-neutral-900/60 border border-white/5 rounded-[2rem] overflow-hidden">
+                      <div className="p-5 bg-neutral-800/40 border-b border-white/5 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <MapPin size={16} className="text-yellow-400" />
+                          <p className="text-xs font-black uppercase tracking-widest text-yellow-400">{city}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-black ${
+                          secretaryContractFilter === 'pendentes' ? 'bg-red-500 text-white' : 'bg-[#39FF14] text-black'
+                        }`}>
+                          {cityContracts.length} {cityContracts.length === 1 ? 'ALUNO' : 'ALUNOS'}
+                        </span>
                       </div>
                       <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                         {cityContracts.map(contract => (
-                          <div key={contract.id} className={`bg-black/40 border p-4 rounded-2xl flex justify-between items-center group transition-all ${contract.status === 'desistente' ? 'border-red-500/20 opacity-60' : contract.isPrinted ? 'border-[#39FF14]/50 shadow-[0_0_15px_rgba(57,255,20,0.1)]' : 'border-red-500/40 shadow-[0_0_15px_rgba(239,68,68,0.1)]'}`}>
-                            <div>
-                              <div className={`inline-block px-2 py-0.5 rounded-md mb-1 ${contract.status === 'desistente' ? 'bg-red-500/10 text-red-500 border border-red-500/20' : contract.isPrinted ? 'bg-[#39FF14] text-black shadow-[0_0_8px_rgba(57,255,20,0.4)]' : 'bg-red-500 text-white animate-pulse'}`}>
-                                 <p className="text-[10px] font-black uppercase tracking-tighter">
-                                   {contract.status === 'desistente' ? 'DESISTENTE' : contract.isPrinted ? 'CONTRATO OK' : 'PENDENTE'}
-                                 </p>
+                          <div 
+                            key={contract.id} 
+                            className={`bg-black/50 border p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 group transition-all ${
+                              contract.status === 'desistente' 
+                                ? 'border-red-500/20 opacity-60 bg-red-950/10' 
+                                : contract.isPrinted 
+                                ? 'border-[#39FF14]/50 shadow-[0_0_15px_rgba(57,255,20,0.08)]' 
+                                : 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.15)]'
+                            }`}
+                          >
+                            <div className="space-y-1 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${
+                                  contract.status === 'desistente' 
+                                    ? 'bg-red-500/10 text-red-400 border border-red-500/30' 
+                                    : contract.isPrinted 
+                                    ? 'bg-[#39FF14] text-black shadow-[0_0_8px_rgba(57,255,20,0.4)]' 
+                                    : 'bg-red-500 text-white animate-pulse'
+                                }`}>
+                                  {contract.status === 'desistente' ? 'DESISTENTE' : contract.isPrinted ? 'CONTRATO OK' : 'PENDENTE DE IMPRESSÃO'}
+                                </span>
                               </div>
-                              <p className="text-xs font-black uppercase text-white">{contract.clientName}</p>
-                              <p className="text-[10px] font-bold text-neutral-500 uppercase mt-1">Vend: {contract.vendorName || contract.consultant}</p>
+                              <p className="text-sm font-black uppercase text-white tracking-tight">{contract.clientName}</p>
+                              <p className="text-[10px] font-bold text-neutral-400 uppercase">
+                                Consultor: {contract.vendorName || contract.consultant || 'Não informado'}
+                              </p>
+                              <p className="text-[9px] text-neutral-500">{contract.courseType}</p>
                             </div>
-                            <div className="flex gap-2">
-                               <button 
-                                 onClick={() => {
-                                   setExportingContract(contract);
-                                   if (spreadsheets.length > 0) {
-                                     setSelectedExportSpreadsheetId(spreadsheets[0].id);
-                                   } else {
-                                     setSelectedExportSpreadsheetId('');
-                                   }
-                                 }}
-                                 className="p-3 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-xl hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95"
-                                 title="Colocar na Planilha Google"
-                               >
-                                 <TableProperties size={16} />
-                               </button>
-                               <button 
-                                 onClick={() => generateContractPDF(contract, false, true)}
-                                 className="p-3 bg-white/5 border border-white/10 rounded-xl text-neutral-400 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center hover:scale-105 active:scale-95"
-                                 title="Imprimir (ECO)"
-                               >
-                                 <Printer size={16} />
-                               </button>
-                               <button 
-                                 onClick={() => deleteContract(contract.id)}
-                                 className="p-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95"
-                                 title="Excluir Contrato"
-                               >
-                                 <Trash2 size={16} />
-                               </button>
+
+                            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
+                              <button 
+                                onClick={() => {
+                                  setExportingContract(contract);
+                                  if (spreadsheets.length > 0) {
+                                    setSelectedExportSpreadsheetId(spreadsheets[0].id);
+                                  } else {
+                                    setSelectedExportSpreadsheetId('');
+                                  }
+                                }}
+                                className="p-3 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-xl hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 cursor-pointer"
+                                title="Colocar na Planilha Google"
+                              >
+                                <TableProperties size={16} />
+                              </button>
+
+                              <button 
+                                onClick={() => generateContractPDF(contract, false, true)}
+                                className={`p-3 rounded-xl transition-all flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer ${
+                                  !contract.isPrinted && contract.status !== 'desistente'
+                                    ? 'bg-yellow-400 text-black border border-yellow-300 shadow-[0_0_15px_rgba(250,204,21,0.3)] font-black'
+                                    : 'bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white'
+                                }`}
+                                title={!contract.isPrinted ? "Imprimir Contrato (Move imediatamente para Contratos OK)" : "Reimprimir Contrato"}
+                              >
+                                <Printer size={16} />
+                              </button>
+
+                              <button 
+                                onClick={() => handleTogglePrinted(contract.id, !!contract.isPrinted)}
+                                className={`p-3 rounded-xl transition-all flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer ${
+                                  contract.isPrinted 
+                                    ? 'bg-neutral-800 text-neutral-400 border border-white/5 hover:text-red-400 hover:border-red-500/30' 
+                                    : 'bg-[#39FF14]/10 text-[#39FF14] border border-[#39FF14]/30 hover:bg-[#39FF14] hover:text-black'
+                                }`}
+                                title={contract.isPrinted ? "Mover de volta para Pendentes" : "Marcar como Impresso / OK"}
+                              >
+                                {contract.isPrinted ? <RotateCw size={16} /> : <CheckCircle2 size={16} />}
+                              </button>
+
+                              <button 
+                                onClick={() => deleteContract(contract.id)}
+                                className="p-3 bg-red-500/10 text-red-500 border border-red-500/20 rounded-xl transition-all flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 hover:bg-red-500 hover:text-white cursor-pointer"
+                                title="Excluir Contrato"
+                              >
+                                <Trash2 size={16} />
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -10140,6 +10375,8 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
                 })}
               </div>
             </div>
+          </div>
+        )}
       </div>
     );
   };
