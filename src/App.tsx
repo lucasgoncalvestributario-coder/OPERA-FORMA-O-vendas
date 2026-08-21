@@ -9,7 +9,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { auth, db } from './lib/firebase';
+import { auth, db, firebaseConfig } from './lib/firebase';
 import { 
   signInWithPopup, 
   GoogleAuthProvider, 
@@ -9468,7 +9468,6 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
       
       const { initializeApp: initTempApp, getApps } = await import('firebase/app');
       const { getAuth: getTempAuth } = await import('firebase/auth');
-      const { firebaseConfig } = await import('./lib/firebase');
       
       const existingApps = getApps();
       const tempApp = existingApps.find(app => app.name === "GoogleSheetsAuthTemp") || initTempApp(firebaseConfig, "GoogleSheetsAuthTemp");
