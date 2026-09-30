@@ -411,6 +411,7 @@ export default function App() {
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [secretarySubTab, setSecretarySubTab] = useState<'historico' | 'checklist'>('historico');
   const [secretaryContractFilter, setSecretaryContractFilter] = useState<'pendentes' | 'ok'>('pendentes');
+  const [printingContractId, setPrintingContractId] = useState<string | null>(null);
   const [contractSubTab, setContractSubTab] = useState<'novo' | 'lista'>('novo');
 
   const MANAGER_ACCOUNTS: Record<string, string> = {
@@ -4115,8 +4116,8 @@ export default function App() {
       observations: (externalData?.observations || contractForm.observations || '').toString(),
     };
 
-    // Se for a Secretaria imprimindo, marcar como impresso no banco
-    if (isSecretaria && externalData?.id) {
+    // Se for a Secretaria imprimindo pelo fluxo legado (quando skipSave for falso e não for gerenciado pelo fluxo de download da Emily)
+    if (!skipSave && !isEmily && isSecretaria && externalData?.id) {
       try {
         const contractRef = doc(db, 'contracts', externalData.id);
         await updateDoc(contractRef, { isPrinted: true });
@@ -10033,6 +10034,73 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
       }
     };
 
+    const isEmilyUser = isEmily || (isSecretaria && !isKarol);
+
+    // Fluxo exclusivo para o acesso da Emily: Gerar PDF completo -> Baixar automaticamente -> Mover para Contratos OK
+    const handleSecretaryPrintContract = async (contract: any) => {
+      if (!contract || !contract.id) return;
+      if (printingContractId === contract.id) return;
+
+      setPrintingContractId(contract.id);
+
+      try {
+        // 1. GERAR O PDF COMPLETO COM TODOS OS DADOS ARMAZENADOS (SEM NENHUMA CHAMADA DE REDE ANTES)
+        const result = await generateContractPDF(contract, true, false);
+        if (!result || !result.pdfDoc) {
+          throw new Error("Não foi possível inicializar o PDF do contrato.");
+        }
+
+        const { pdfDoc } = result;
+
+        // Nome organizado conforme padrão do sistema: "Contrato - Nome do Cliente - Nº do Contrato.pdf"
+        const clientClean = (contract.clientName || 'Cliente').trim().replace(/[/\\?%*:|"<>]/g, '');
+        const contractNum = contract.contractNumber || (contract.id ? String(contract.id).slice(-6).toUpperCase() : '');
+        const finalFileName = contractNum 
+          ? `Contrato - ${clientClean} - Nº ${contractNum}.pdf`
+          : `Contrato - ${clientClean}.pdf`;
+
+        // 2. BAIXAR AUTOMATICAMENTE PARA O DISPOSITIVO DA EMILY
+        let downloadTriggered = false;
+        try {
+          pdfDoc.save(finalFileName);
+          downloadTriggered = true;
+        } catch (saveErr) {
+          console.warn("pdfDoc.save() falhou, acionando download via Blob:", saveErr);
+        }
+
+        if (!downloadTriggered) {
+          const pdfBlob = pdfDoc.output('blob');
+          const blobUrl = URL.createObjectURL(pdfBlob);
+          const downloadAnchor = document.createElement('a');
+          downloadAnchor.style.display = 'none';
+          downloadAnchor.href = blobUrl;
+          downloadAnchor.download = finalFileName;
+          document.body.appendChild(downloadAnchor);
+          downloadAnchor.click();
+          setTimeout(() => {
+            try {
+              document.body.removeChild(downloadAnchor);
+              URL.revokeObjectURL(blobUrl);
+            } catch (_) {}
+          }, 3000);
+        }
+
+        // 3. MOVER IMEDIATAMENTE PARA "CONTRATOS OK" SOMENTE APÓS O PDF TER SIDO GERADO E DOWNLOAD INICIADO COM SUCESSO
+        const contractRef = doc(db, 'contracts', contract.id);
+        await updateDoc(contractRef, { 
+          isPrinted: true,
+          printedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+
+      } catch (err) {
+        console.error("Erro ao gerar/baixar contrato completo para Emily:", err);
+        alert("Não foi possível gerar o PDF completo do contrato. O contrato permaneceu em 'Contratos Pendentes'. Por favor, tente novamente.");
+      } finally {
+        setPrintingContractId(null);
+      }
+    };
+
     return (
       <div className="space-y-6 pb-24">
         {/* CABEÇALHO COM ABAS EXCLUSIVAS DE GERENCIAMENTO (PENDENTES x OK) */}
@@ -10220,8 +10288,17 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
 
                               {/* BOTÃO IMPRIMIR (ECO / PDF) -> AUTOMATICAMENTE MARCA COMO IMPRESSO */}
                               <button 
-                                onClick={() => generateContractPDF(contract, false, true)}
+                                onClick={() => {
+                                  if (isEmilyUser && secretaryContractFilter === 'pendentes') {
+                                    handleSecretaryPrintContract(contract);
+                                  } else {
+                                    generateContractPDF(contract, false, true);
+                                  }
+                                }}
+                                disabled={printingContractId === contract.id}
                                 className={`p-3 rounded-xl transition-all flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer ${
+                                  printingContractId === contract.id ? 'opacity-50 cursor-wait animate-pulse' : ''
+                                } ${
                                   !contract.isPrinted && contract.status !== 'desistente'
                                     ? 'bg-yellow-400 text-black border border-yellow-300 shadow-[0_0_15px_rgba(250,204,21,0.3)] font-black'
                                     : 'bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white'
@@ -10340,8 +10417,17 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
                               </button>
 
                               <button 
-                                onClick={() => generateContractPDF(contract, false, true)}
+                                onClick={() => {
+                                  if (isEmilyUser && secretaryContractFilter === 'pendentes') {
+                                    handleSecretaryPrintContract(contract);
+                                  } else {
+                                    generateContractPDF(contract, false, true);
+                                  }
+                                }}
+                                disabled={printingContractId === contract.id}
                                 className={`p-3 rounded-xl transition-all flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer ${
+                                  printingContractId === contract.id ? 'opacity-50 cursor-wait animate-pulse' : ''
+                                } ${
                                   !contract.isPrinted && contract.status !== 'desistente'
                                     ? 'bg-yellow-400 text-black border border-yellow-300 shadow-[0_0_15px_rgba(250,204,21,0.3)] font-black'
                                     : 'bg-white/5 border border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white'
