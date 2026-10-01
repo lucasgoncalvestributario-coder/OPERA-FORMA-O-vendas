@@ -4433,25 +4433,47 @@ export default function App() {
     return { pdfDoc, fileName };
   };
 
-  // Rotina garantida e direta de entrega de PDF (Download limpo e imediato sem iframes ou bloqueios)
+  // Download real e garantido de PDF no computador
+  // Implementação recomendada: Blob + URL.createObjectURL + elemento <a download> sem revogação prematura
   const downloadAndOpenPdfBlob = (pdfDoc: jsPDF, finalFileName: string) => {
     try {
       const pdfBlob = pdfDoc.output('blob');
       const blobUrl = URL.createObjectURL(pdfBlob);
 
-      // 1. Download nativo imediato via tag <a> invisível
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = finalFileName;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
+      // Download nativo imediato via tag <a> inserida no DOM
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = finalFileName;
+      link.setAttribute('download', finalFileName);
+      link.style.position = 'fixed';
+      link.style.top = '-9999px';
+      link.style.left = '-9999px';
+      link.style.opacity = '0';
+      document.body.appendChild(link);
+      
+      // Aciona o download
+      link.click();
+
+      // Fallback adicional direto pelo jsPDF para garantir em qualquer navegador
+      try {
+        pdfDoc.save(finalFileName);
+      } catch (_) {}
+
+      // Limpeza segura: remove o elemento após 5s, mas NÃO revoga o Blob imediatamente
+      // (mantém o Blob na memória por 2 minutos para o navegador concluir a gravação em disco)
       setTimeout(() => {
         try {
-          document.body.removeChild(a);
+          if (document.body.contains(link)) {
+            document.body.removeChild(link);
+          }
+        } catch (_) {}
+      }, 5000);
+
+      setTimeout(() => {
+        try {
           URL.revokeObjectURL(blobUrl);
         } catch (_) {}
-      }, 2000);
+      }, 120000);
 
       return blobUrl;
     } catch (err) {
@@ -4466,7 +4488,7 @@ export default function App() {
   };
 
   // Função centralizada e definitiva de impressão para Emily (Secretária)
-  // CLICOU NA IMPRESSORA = GERA O PDF COMPLETO, BAIXA AUTOMATICAMENTE E MOVE PARA OK (SE PENDENTE)
+  // CLICOU NA IMPRESSORA = GERA O PDF COMPLETO, BAIXA AUTOMATICAMENTE NO COMPUTADOR E MOVE PARA OK (SE PENDENTE)
   const emilyPrintContract = async (contract: any) => {
     if (!contract) return;
     const contractId = contract.id || '';
@@ -4484,44 +4506,53 @@ export default function App() {
       // 1. GERAR O PDF COMPLETO COM TODAS AS CLÁUSULAS E DADOS ORIGINAIS
       const result = await generateContractPDF(contract, true, false);
       if (!result || !result.pdfDoc) {
-        throw new Error("Não foi possível gerar o arquivo PDF completo do contrato.");
+        throw new Error("Não foi possível gerar os dados completos do contrato.");
       }
 
       const { pdfDoc } = result;
 
-      // Nome organizado conforme especificação: Contrato - Nome do Cliente - Nº do Contrato.pdf
-      const clientClean = (contract.clientName || 'Cliente').trim().replace(/[/\\?%*:|"<>]/g, '');
+      // 2. NOME DO ARQUIVO IDENTIFICÁVEL: contrato-[nome-do-cliente].pdf
+      const clientClean = (contract.clientName || 'cliente')
+        .trim()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '') // remove acentos
+        .replace(/[^a-zA-Z0-9_-]/g, '_') // caracteres 100% seguros em Windows/Mac/Linux
+        .toLowerCase();
+      
       const contractNum = contract.contractNumber || (contract.id ? String(contract.id).slice(-6).toUpperCase() : '');
       const finalFileName = contractNum 
-        ? `Contrato - ${clientClean} - Nº ${contractNum}.pdf`
-        : `Contrato - ${clientClean}.pdf`;
+        ? `contrato-${clientClean}-${contractNum.toLowerCase()}.pdf`
+        : `contrato-${clientClean}.pdf`;
 
-      // 2. BAIXAR AUTOMATICAMENTE O ARQUIVO PDF COMPLETO NO DISPOSITIVO (IMEDIATO, SEM MODAIS OU SEGUNDO CLIQUE)
+      // 3. INICIAR AUTOMATICAMENTE O DOWNLOAD DO ARQUIVO NO COMPUTADOR (DIRETO E SEM CLIQUE EXTRA)
       downloadAndOpenPdfBlob(pdfDoc, finalFileName);
 
-      // 3. LIBERAR IMEDIATAMENTE O ESTADO DE CARREGAMENTO PARA O BOTÃO NUNCA FICAR TRAVADO
+      // 4. LIBERAR IMEDIATAMENTE O ESTADO DE CARREGAMENTO PARA O BOTÃO NUNCA FICAR TRAVADO
       if (contractId) {
         setPrintingContractId(null);
       }
 
-      // 4. MOVER IMEDIATAMENTE PARA "CONTRATOS OK" SOMENTE DEPOIS DE INICIAR O DOWNLOAD
+      // 5. APÓS O DOWNLOAD SER INICIADO, MOVER PARA "CONTRATOS OK"
+      // Aguardamos 600ms para permitir que a thread do navegador aloque o download antes de atualizar a lista de contratos
       if (contractId && !contract.isPrinted) {
-        const nowIso = new Date().toISOString();
+        setTimeout(async () => {
+          const nowIso = new Date().toISOString();
 
-        // Atualização otimista na memória para a UI mover o contrato instantaneamente de Pendentes para OK
-        setContracts(prev => prev.map(c => c.id === contractId ? { ...c, isPrinted: true, printedAt: nowIso, updatedAt: nowIso } : c));
+          // Atualização otimista na memória para a UI mover o contrato de Pendentes para OK
+          setContracts(prev => prev.map(c => c.id === contractId ? { ...c, isPrinted: true, printedAt: nowIso, updatedAt: nowIso } : c));
 
-        // Sincronização em background no Firestore (sem travar a interface da Emily)
-        try {
-          const contractRef = doc(db, 'contracts', contractId);
-          await updateDoc(contractRef, { 
-            isPrinted: true,
-            printedAt: nowIso,
-            updatedAt: nowIso
-          });
-        } catch (dbErr) {
-          console.warn("Aviso ao persistir status impresso no Firestore:", dbErr);
-        }
+          // Sincronização em background no Firestore (sem bloquear a interface da Emily)
+          try {
+            const contractRef = doc(db, 'contracts', contractId);
+            await updateDoc(contractRef, { 
+              isPrinted: true,
+              printedAt: nowIso,
+              updatedAt: nowIso
+            });
+          } catch (dbErr) {
+            console.warn("Aviso ao persistir status impresso no Firestore:", dbErr);
+          }
+        }, 600);
       }
 
       // Confirmação visual discreta que se auto-encerra em 3.5 segundos sem exigir nenhum clique extra
@@ -4536,9 +4567,10 @@ export default function App() {
       }, 3500);
 
     } catch (err: any) {
-      console.error("Erro ao gerar/imprimir contrato para Emily:", err);
+      console.error("Erro ao gerar/baixar PDF do contrato:", err);
+      // Notificação clara em caso de erro sem mover para OK
       try {
-        alert(err?.message || "Não foi possível gerar o PDF completo do contrato. O contrato permaneceu em seu status original para nova tentativa.");
+        alert(err?.message || "Não foi possível gerar o PDF do contrato. O contrato permaneceu em Contratos Pendentes para nova tentativa.");
       } catch (_) {}
     } finally {
       // Garantia total de que o botão SEMPRE sai do estado de carregamento
