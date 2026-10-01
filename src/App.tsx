@@ -412,6 +412,7 @@ export default function App() {
   const [secretarySubTab, setSecretarySubTab] = useState<'historico' | 'checklist'>('historico');
   const [secretaryContractFilter, setSecretaryContractFilter] = useState<'pendentes' | 'ok'>('pendentes');
   const [printingContractId, setPrintingContractId] = useState<string | null>(null);
+  const [lastPrintedContract, setLastPrintedContract] = useState<{ id: string; clientName: string; url: string; fileName: string } | null>(null);
   const [contractSubTab, setContractSubTab] = useState<'novo' | 'lista'>('novo');
 
   const MANAGER_ACCOUNTS: Record<string, string> = {
@@ -1993,6 +1994,7 @@ export default function App() {
     'valiandrobock@gmail.com',
     'valiandro@gmail.com'
   ].includes(user.email.toLowerCase());
+  const isEmilyAccess = isEmily || (isSecretaria && !isKarol);
 
   useEffect(() => {
     const canSeeCarteirinha = !isEmily;
@@ -4116,16 +4118,6 @@ export default function App() {
       observations: (externalData?.observations || contractForm.observations || '').toString(),
     };
 
-    // Se for a Secretaria imprimindo pelo fluxo legado (quando skipSave for falso e não for gerenciado pelo fluxo de download da Emily)
-    if (!skipSave && !isEmily && isSecretaria && externalData?.id) {
-      try {
-        const contractRef = doc(db, 'contracts', externalData.id);
-        await updateDoc(contractRef, { isPrinted: true });
-      } catch (err) {
-        console.error("Erro ao marcar como impresso:", err);
-      }
-    }
-
     const pdfDoc = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
@@ -4436,9 +4428,132 @@ export default function App() {
     const safeName = f.clientName.trim() ? f.clientName.replace(/\s+/g, '_').toUpperCase() : 'ALUNO';
     const fileName = `CONTRATO_${safeName}${ecoMode ? '_ECO' : ''}.pdf`;
     if (!skipSave) {
-      pdfDoc.save(fileName);
+      downloadAndOpenPdfBlob(pdfDoc, fileName);
     }
     return { pdfDoc, fileName };
+  };
+
+  // Rotina garantida de entrega de PDF (Download + Print em todos os navegadores/dispositivos)
+  const downloadAndOpenPdfBlob = (pdfDoc: jsPDF, finalFileName: string) => {
+    try {
+      const pdfBlob = pdfDoc.output('blob');
+      const blobUrl = URL.createObjectURL(pdfBlob);
+
+      // 1. Download nativo imediato via tag <a> invisível
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = finalFileName;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        try { document.body.removeChild(a); } catch (_) {}
+      }, 3000);
+
+      // 2. jsPDF save como reforço
+      try {
+        pdfDoc.save(finalFileName);
+      } catch (saveErr) {
+        console.warn("pdfDoc.save alternativo:", saveErr);
+      }
+
+      // 3. Iframe de impressão direta para navegadores desktop
+      try {
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.src = blobUrl;
+        document.body.appendChild(iframe);
+        iframe.onload = () => {
+          setTimeout(() => {
+            try {
+              iframe.contentWindow?.focus();
+              iframe.contentWindow?.print();
+            } catch (_) {}
+            setTimeout(() => {
+              try { document.body.removeChild(iframe); } catch (_) {}
+            }, 60000);
+          }, 400);
+        };
+      } catch (iframeErr) {
+        console.warn("Iframe print falhou:", iframeErr);
+      }
+
+      return blobUrl;
+    } catch (err) {
+      console.error("Erro no downloadAndOpenPdfBlob:", err);
+      try {
+        pdfDoc.save(finalFileName);
+      } catch (_) {}
+      return '';
+    }
+  };
+
+  // Função centralizada e definitiva de impressão para Emily (Secretária)
+  // CLICOU NA IMPRESSORA = GERA O PDF COMPLETO, INICIA DOWNLOAD/IMPRESSÃO E MOVE PARA OK (SE PENDENTE)
+  const emilyPrintContract = async (contract: any) => {
+    if (!contract) return;
+    const contractId = contract.id || '';
+
+    if (contractId && printingContractId === contractId) {
+      return; // Prevenir cliques duplos
+    }
+
+    if (contractId) {
+      setPrintingContractId(contractId);
+    }
+
+    try {
+      // 1. GERAR O PDF COMPLETO COM TODAS AS CLÁUSULAS E DADOS ORIGINAIS
+      const result = await generateContractPDF(contract, true, false);
+      if (!result || !result.pdfDoc) {
+        throw new Error("Não foi possível gerar o arquivo PDF do contrato.");
+      }
+
+      const { pdfDoc } = result;
+
+      // Nome organizado conforme especificação: Contrato - Nome do Cliente - Nº do Contrato.pdf
+      const clientClean = (contract.clientName || 'Cliente').trim().replace(/[/\\?%*:|"<>]/g, '');
+      const contractNum = contract.contractNumber || (contract.id ? String(contract.id).slice(-6).toUpperCase() : '');
+      const finalFileName = contractNum 
+        ? `Contrato - ${clientClean} - Nº ${contractNum}.pdf`
+        : `Contrato - ${clientClean}.pdf`;
+
+      // 2. BAIXAR E ABRIR PARA IMPRESSÃO AUTOMATICAMENTE
+      const blobUrl = downloadAndOpenPdfBlob(pdfDoc, finalFileName);
+
+      if (blobUrl) {
+        setLastPrintedContract({
+          id: contractId,
+          clientName: contract.clientName || 'Cliente',
+          url: blobUrl,
+          fileName: finalFileName
+        });
+      }
+
+      // 3. MOVER IMEDIATAMENTE PARA "CONTRATOS OK" SOMENTE DEPOIS DE CONCLUIR O FLUXO DE GERAÇÃO/IMPRESSÃO DO PDF
+      // Se o contrato for pendente (!contract.isPrinted), marcar como impresso no banco
+      if (contractId && !contract.isPrinted) {
+        const contractRef = doc(db, 'contracts', contractId);
+        await updateDoc(contractRef, { 
+          isPrinted: true,
+          printedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+    } catch (err) {
+      console.error("Erro ao gerar/imprimir contrato para Emily:", err);
+      alert("Não foi possível gerar o PDF completo do contrato. O contrato permaneceu em seu status original para nova tentativa.");
+    } finally {
+      if (contractId) {
+        setPrintingContractId(null);
+      }
+    }
   };
 
 
@@ -8613,8 +8728,14 @@ Estou à disposição!`;
                                   <TableProperties size={14} />
                                 </button>
                                 <button 
-                                  onClick={() => generateContractPDF(item, false, true)}
-                                  className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+                                  onClick={() => {
+                                    if (isEmilyAccess) {
+                                      emilyPrintContract(item);
+                                    } else {
+                                      generateContractPDF(item, false, true);
+                                    }
+                                  }}
+                                  className="p-2 text-neutral-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
                                   title="Imprimir (ECO)"
                                 >
                                   <Printer size={14} />
@@ -10034,73 +10155,6 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
       }
     };
 
-    const isEmilyUser = isEmily || (isSecretaria && !isKarol);
-
-    // Fluxo exclusivo para o acesso da Emily: Gerar PDF completo -> Baixar automaticamente -> Mover para Contratos OK
-    const handleSecretaryPrintContract = async (contract: any) => {
-      if (!contract || !contract.id) return;
-      if (printingContractId === contract.id) return;
-
-      setPrintingContractId(contract.id);
-
-      try {
-        // 1. GERAR O PDF COMPLETO COM TODOS OS DADOS ARMAZENADOS (SEM NENHUMA CHAMADA DE REDE ANTES)
-        const result = await generateContractPDF(contract, true, false);
-        if (!result || !result.pdfDoc) {
-          throw new Error("Não foi possível inicializar o PDF do contrato.");
-        }
-
-        const { pdfDoc } = result;
-
-        // Nome organizado conforme padrão do sistema: "Contrato - Nome do Cliente - Nº do Contrato.pdf"
-        const clientClean = (contract.clientName || 'Cliente').trim().replace(/[/\\?%*:|"<>]/g, '');
-        const contractNum = contract.contractNumber || (contract.id ? String(contract.id).slice(-6).toUpperCase() : '');
-        const finalFileName = contractNum 
-          ? `Contrato - ${clientClean} - Nº ${contractNum}.pdf`
-          : `Contrato - ${clientClean}.pdf`;
-
-        // 2. BAIXAR AUTOMATICAMENTE PARA O DISPOSITIVO DA EMILY
-        let downloadTriggered = false;
-        try {
-          pdfDoc.save(finalFileName);
-          downloadTriggered = true;
-        } catch (saveErr) {
-          console.warn("pdfDoc.save() falhou, acionando download via Blob:", saveErr);
-        }
-
-        if (!downloadTriggered) {
-          const pdfBlob = pdfDoc.output('blob');
-          const blobUrl = URL.createObjectURL(pdfBlob);
-          const downloadAnchor = document.createElement('a');
-          downloadAnchor.style.display = 'none';
-          downloadAnchor.href = blobUrl;
-          downloadAnchor.download = finalFileName;
-          document.body.appendChild(downloadAnchor);
-          downloadAnchor.click();
-          setTimeout(() => {
-            try {
-              document.body.removeChild(downloadAnchor);
-              URL.revokeObjectURL(blobUrl);
-            } catch (_) {}
-          }, 3000);
-        }
-
-        // 3. MOVER IMEDIATAMENTE PARA "CONTRATOS OK" SOMENTE APÓS O PDF TER SIDO GERADO E DOWNLOAD INICIADO COM SUCESSO
-        const contractRef = doc(db, 'contracts', contract.id);
-        await updateDoc(contractRef, { 
-          isPrinted: true,
-          printedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
-
-      } catch (err) {
-        console.error("Erro ao gerar/baixar contrato completo para Emily:", err);
-        alert("Não foi possível gerar o PDF completo do contrato. O contrato permaneceu em 'Contratos Pendentes'. Por favor, tente novamente.");
-      } finally {
-        setPrintingContractId(null);
-      }
-    };
-
     return (
       <div className="space-y-6 pb-24">
         {/* CABEÇALHO COM ABAS EXCLUSIVAS DE GERENCIAMENTO (PENDENTES x OK) */}
@@ -10289,8 +10343,8 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
                               {/* BOTÃO IMPRIMIR (ECO / PDF) -> AUTOMATICAMENTE MARCA COMO IMPRESSO */}
                               <button 
                                 onClick={() => {
-                                  if (isEmilyUser && secretaryContractFilter === 'pendentes') {
-                                    handleSecretaryPrintContract(contract);
+                                  if (isEmilyAccess) {
+                                    emilyPrintContract(contract);
                                   } else {
                                     generateContractPDF(contract, false, true);
                                   }
@@ -10418,8 +10472,8 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
 
                               <button 
                                 onClick={() => {
-                                  if (isEmilyUser && secretaryContractFilter === 'pendentes') {
-                                    handleSecretaryPrintContract(contract);
+                                  if (isEmilyAccess) {
+                                    emilyPrintContract(contract);
                                   } else {
                                     generateContractPDF(contract, false, true);
                                   }
@@ -10636,8 +10690,14 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
                          <MessageCircle size={16} />
                        </button>
                        <button 
-                         onClick={() => generateContractPDF(contract, false, true)}
-                         className="flex-1 sm:flex-none p-3 bg-white/5 border border-white/10 text-white rounded-xl hover:bg-white/10 transition-all flex items-center justify-center hover:scale-105 active:scale-95"
+                         onClick={() => {
+                           if (isEmilyAccess) {
+                             emilyPrintContract(contract);
+                           } else {
+                             generateContractPDF(contract, false, true);
+                           }
+                         }}
+                         className="flex-1 sm:flex-none p-3 bg-white/5 border border-white/10 text-white rounded-xl hover:bg-white/10 transition-all flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer"
                          title="Imprimir (ECO)"
                        >
                          <Printer size={16} />
@@ -14921,21 +14981,74 @@ Caso você não compareça no primeiro dia do curso (*${contractForm.courseDate}
                   Cidade: {toast.contract.courseCity} • Vend: {toast.contract.vendorName || toast.contract.consultant || 'Não Informado'}
                 </p>
                 
-                <div className="pt-2">
+                <div className="pt-2 flex gap-2">
+                  <button
+                    onClick={() => {
+                      emilyPrintContract(toast.contract);
+                      setContractToasts(prev => prev.filter(t => t.id !== toast.id));
+                    }}
+                    className="flex-1 py-2.5 bg-yellow-400 hover:bg-yellow-300 active:scale-95 text-black font-black uppercase text-[10px] tracking-wider rounded-xl transition-all shadow-[0_4px_12px_rgba(250,204,21,0.3)] flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Printer size={14} />
+                    Imprimir
+                  </button>
                   <button
                     onClick={() => {
                       shareContractWhatsApp(toast.contract);
                       setContractToasts(prev => prev.filter(t => t.id !== toast.id));
                     }}
-                    className="w-full py-2.5 bg-green-500 hover:bg-green-600 active:scale-95 text-black font-black uppercase text-[10px] tracking-wider rounded-xl transition-all shadow-[0_4px_12px_rgba(34,197,94,0.3)] flex items-center justify-center gap-2"
+                    className="flex-1 py-2.5 bg-green-500 hover:bg-green-600 active:scale-95 text-black font-black uppercase text-[10px] tracking-wider rounded-xl transition-all shadow-[0_4px_12px_rgba(34,197,94,0.3)] flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <MessageCircle size={14} fill="currentColor" />
-                    Enviar Contrato
+                    Enviar
                   </button>
                 </div>
               </div>
             </motion.div>
           ))}
+          {lastPrintedContract && isEmilyAccess && (
+            <motion.div
+              initial={{ opacity: 0, y: 50, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.9 }}
+              className="pointer-events-auto bg-neutral-950 border-2 border-yellow-400 backdrop-blur-xl p-4 rounded-[2rem] shadow-[0_20px_40px_rgba(0,0,0,0.8)] flex items-center justify-between gap-3 relative overflow-hidden"
+              style={{
+                background: "linear-gradient(135deg, rgba(23, 23, 23, 0.98), rgba(10, 10, 10, 0.99))"
+              }}
+            >
+              <div className="absolute top-0 left-0 w-full h-1 bg-yellow-400 animate-pulse" />
+              <div className="flex items-center gap-3">
+                <div className="bg-yellow-400 text-black p-2.5 rounded-2xl flex-shrink-0">
+                  <Printer size={18} />
+                </div>
+                <div>
+                  <h4 className="text-[9px] font-black tracking-[0.2em] uppercase text-yellow-400">
+                    Contrato Gerado!
+                  </h4>
+                  <p className="text-white font-black uppercase text-xs leading-tight">
+                    {lastPrintedContract.clientName}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <a
+                  href={lastPrintedContract.url}
+                  download={lastPrintedContract.fileName}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-2 bg-yellow-400 hover:bg-yellow-300 text-black font-black text-[10px] tracking-wider rounded-xl transition-all shadow-md flex items-center gap-1 cursor-pointer"
+                >
+                  <FileDown size={14} /> Abrir / Baixar
+                </a>
+                <button
+                  onClick={() => setLastPrintedContract(null)}
+                  className="p-1 rounded-full bg-white/5 text-neutral-500 hover:text-white transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
     </div>
